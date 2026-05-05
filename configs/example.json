@@ -1,0 +1,24 @@
+{
+  "default_webhook": "https://hooks.slack.com/services/EXAMPLE/WEBHOOK",
+  "check_interval": 30000000000,
+  "jobs": [
+    {
+      "name": "nightly-backup",
+      "schedule": "0 2 * * *",
+      "timeout": 3600000000000,
+      "webhook_url": ""
+    },
+    {
+      "name": "hourly-sync",
+      "schedule": "0 * * * *",
+      "timeout": 600000000000,
+      "webhook_url": "https://hooks.pagerduty.com/services/EXAMPLE"
+    },
+    {
+      "name": "health-check",
+      "schedule": "*/5 * * * *",
+      "timeout": 60000000000,
+      "webhook_url": ""
+    }
+  ]
+}
