@@ -68,3 +68,16 @@ func (s *Store) All(jobName string) []Entry {
 	copy(out, list)
 	return out
 }
+
+// JobNames returns a sorted list of all job names that have recorded entries.
+func (s *Store) JobNames() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	names := make([]string, 0, len(s.entries))
+	for name := range s.entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
