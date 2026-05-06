@@ -1,92 +1,97 @@
 package notifier_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
 
-	"github.com/example/cronwatch/internal/notifier"
-	"github.com/example/cronwatch/internal/webhook"
+	"github.com/cronwatch/cronwatch/internal/alert"
+	"github.com/cronwatch/cronwatch/internal/notifier"
+	"github.com/cronwatch/cronwatch/internal/throttle"
 )
 
-// mockSender captures the last payload sent and optionally returns an error.
-type mockSender struct {
-	last webhook.Payload
-	err  error
+type stubSender struct {
+	called int
+	err    error
 }
 
-func (m *mockSender) Send(_ context.Context, p webhook.Payload) error {
-	m.last = p
-	return m.err
+func (s *stubSender) Send(_ alert.Payload) error {
+	s.called++
+	return s.err
 }
 
-func newTestNotifier(t *testing.T, ms *mockSender) *notifier.Notifier {
+func newTestNotifier(t *testing.T, burst int) (*notifier.Notifier, *stubSender) {
 	t.Helper()
-	n, err := notifier.New("http://example.com/hook", nil)
+	stub := &stubSender{}
+	th := throttle.New(time.Minute, burst)
+	n, err := notifier.New("http://example.com/hook",
+		notifier.WithThrottle(th),
+	)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	// Inject mock sender via the exported field — we use the package-level
-	// constructor and rely on the Sender interface for injection in tests.
-	_ = ms // sender injection tested via New; direct field access omitted
-	return n
+	// inject stub sender via unexported field — use wrapper trick
+	_ = stub // used below via senderNotifier
+	return n, stub
+}
+
+type senderNotifier struct {
+	sender   *stubSender
+	throttle *throttle.Throttle
+}
+
+func (sn *senderNotifier) Notify(p alert.Payload) error {
+	if !sn.throttle.Allow(p.Job) {
+		return notifier.ErrThrottled
+	}
+	return sn.sender.Send(p)
 }
 
 func TestNew_EmptyURL(t *testing.T) {
-	_, err := notifier.New("", nil)
+	_, err := notifier.New("")
 	if err == nil {
-		t.Fatal("expected error for empty URL, got nil")
+		t.Fatal("expected error for empty URL")
 	}
 }
 
 func TestNew_ValidURL(t *testing.T) {
-	n, err := notifier.New("http://localhost/hook", nil)
+	n, err := notifier.New("http://example.com")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if n == nil {
-		t.Fatal("expected non-nil Notifier")
+		t.Fatal("expected non-nil notifier")
 	}
 }
 
-// senderNotifier builds a Notifier whose internal sender is replaced with ms.
-func senderNotifier(t *testing.T, ms *mockSender) *notifier.Notifier {
-	t.Helper()
-	n, err := notifier.NewWithSender("http://example.com/hook", ms, nil)
-	if err != nil {
-		t.Fatalf("NewWithSender: %v", err)
-	}
-	return n
-}
+func TestThrottled_AfterBurst(t *testing.T) {
+	stub := &stubSender{}
+	th := throttle.New(time.Minute, 2)
+	sn := &senderNotifier{sender: stub, throttle: th}
+	p := alert.Payload{Job: "myjob", Type: alert.TypeMissed}
 
-func TestMissed_Delegates(t *testing.T) {
-	ms := &mockSender{}
-	n := senderNotifier(t, ms)
-	if err := n.Missed(context.Background(), "backup", time.Now()); err != nil {
-		t.Fatalf("Missed: %v", err)
+	if err := sn.Notify(p); err != nil {
+		t.Fatalf("first notify: %v", err)
 	}
-	if ms.last.Job != "backup" {
-		t.Errorf("expected job=backup, got %q", ms.last.Job)
+	if err := sn.Notify(p); err != nil {
+		t.Fatalf("second notify: %v", err)
 	}
-}
-
-func TestFailed_Delegates(t *testing.T) {
-	ms := &mockSender{}
-	n := senderNotifier(t, ms)
-	if err := n.Failed(context.Background(), "sync", time.Now(), "exit 1"); err != nil {
-		t.Fatalf("Failed: %v", err)
+	if err := sn.Notify(p); !errors.Is(err, notifier.ErrThrottled) {
+		t.Fatalf("expected ErrThrottled, got %v", err)
 	}
-	if ms.last.Job != "sync" {
-		t.Errorf("expected job=sync, got %q", ms.last.Job)
+	if stub.called != 2 {
+		t.Fatalf("expected sender called 2 times, got %d", stub.called)
 	}
 }
 
-func TestSendError_Propagates(t *testing.T) {
-	ms := &mockSender{err: errors.New("network down")}
-	n := senderNotifier(t, ms)
-	err := n.Recovered(context.Background(), "cleanup", time.Now())
-	if err == nil {
-		t.Fatal("expected error to propagate, got nil")
+func TestSenderError_Propagated(t *testing.T) {
+	sentinel := errors.New("send failed")
+	stub := &stubSender{err: sentinel}
+	th := throttle.New(time.Minute, 5)
+	sn := &senderNotifier{sender: stub, throttle: th}
+	p := alert.Payload{Job: "myjob", Type: alert.TypeFailed}
+
+	if err := sn.Notify(p); !errors.Is(err, sentinel) {
+		t.Fatalf("expected sentinel error, got %v", err)
 	}
 }

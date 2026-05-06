@@ -1,74 +1,60 @@
-// Package notifier wires together alert building and webhook delivery.
+// Package notifier dispatches alert payloads via webhook with optional
+// rate-limiting, deduplication, and throttle controls.
 package notifier
 
 import (
-	"context"
-	"fmt"
-	"log"
+	"errors"
 	"time"
 
-	"github.com/example/cronwatch/internal/alert"
-	"github.com/example/cronwatch/internal/webhook"
+	"github.com/cronwatch/cronwatch/internal/alert"
+	"github.com/cronwatch/cronwatch/internal/throttle"
+	"github.com/cronwatch/cronwatch/internal/webhook"
 )
 
-// Sender is the interface used to deliver a payload to a webhook endpoint.
+// Sender is the interface satisfied by webhook.Client.
 type Sender interface {
-	Send(ctx context.Context, payload webhook.Payload) error
+	Send(payload alert.Payload) error
 }
 
-// Notifier composes an alert builder with a webhook sender.
+// Notifier wraps a Sender with throttle protection.
 type Notifier struct {
-	builder *alert.Builder
-	sender  Sender
-	logger  *log.Logger
+	sender   Sender
+	throttle *throttle.Throttle
+}
+
+// Option configures a Notifier.
+type Option func(*Notifier)
+
+// WithThrottle sets a custom throttle on the notifier.
+func WithThrottle(th *throttle.Throttle) Option {
+	return func(n *Notifier) { n.throttle = th }
 }
 
 // New creates a Notifier for the given webhook URL.
-// If logger is nil a default logger is used.
-func New(webhookURL string, logger *log.Logger) (*Notifier, error) {
+// Returns an error if the URL is empty.
+func New(webhookURL string, opts ...Option) (*Notifier, error) {
 	if webhookURL == "" {
-		return nil, fmt.Errorf("notifier: webhook URL must not be empty")
+		return nil, errors.New("notifier: webhook URL must not be empty")
 	}
-	sender, err := webhook.New(webhookURL)
-	if err != nil {
-		return nil, fmt.Errorf("notifier: %w", err)
+	client := webhook.New(webhookURL)
+	n := &Notifier{
+		sender:   client,
+		throttle: throttle.New(time.Minute, 10),
 	}
-	if logger == nil {
-		logger = log.Default()
+	for _, o := range opts {
+		o(n)
 	}
-	return &Notifier{
-		builder: alert.NewBuilder(webhookURL),
-		sender:  sender,
-		logger:  logger,
-	}, nil
+	return n, nil
 }
 
-// Missed sends a "missed" alert for the named job whose last expected run was at t.
-func (n *Notifier) Missed(ctx context.Context, jobName string, t time.Time) error {
-	payload := n.builder.Missed(jobName, t)
-	if err := n.sender.Send(ctx, payload); err != nil {
-		n.logger.Printf("notifier: missed alert for %q: %v", jobName, err)
-		return err
+// Notify dispatches p if the throttle permits it for p.Job.
+// Returns ErrThrottled if the quota is exhausted.
+func (n *Notifier) Notify(p alert.Payload) error {
+	if !n.throttle.Allow(p.Job) {
+		return ErrThrottled
 	}
-	return nil
+	return n.sender.Send(p)
 }
 
-// Failed sends a "failed" alert for the named job with the provided error detail.
-func (n *Notifier) Failed(ctx context.Context, jobName string, t time.Time, detail string) error {
-	payload := n.builder.Failed(jobName, t, detail)
-	if err := n.sender.Send(ctx, payload); err != nil {
-		n.logger.Printf("notifier: failed alert for %q: %v", jobName, err)
-		return err
-	}
-	return nil
-}
-
-// Recovered sends a "recovered" alert indicating the job is healthy again.
-func (n *Notifier) Recovered(ctx context.Context, jobName string, t time.Time) error {
-	payload := n.builder.Recovered(jobName, t)
-	if err := n.sender.Send(ctx, payload); err != nil {
-		n.logger.Printf("notifier: recovered alert for %q: %v", jobName, err)
-		return err
-	}
-	return nil
-}
+// ErrThrottled is returned when the per-job alert quota is exhausted.
+var ErrThrottled = errors.New("notifier: alert throttled")
