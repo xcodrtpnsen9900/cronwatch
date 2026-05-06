@@ -1,5 +1,5 @@
-// Package ratelimit provides a simple per-job alert rate limiter to prevent
-// alert storms when a job repeatedly fails within a short window.
+// Package ratelimit provides per-job alert suppression to prevent
+// notification floods when a job repeatedly fails within a cooldown window.
 package ratelimit
 
 import (
@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Limiter tracks the last alert time per job and suppresses duplicate alerts
-// within the configured cooldown window.
+// Limiter tracks the last alert time per job and suppresses duplicate
+// alerts that arrive within the configured cooldown period.
 type Limiter struct {
 	mu       sync.Mutex
 	cooldown time.Duration
@@ -16,7 +16,7 @@ type Limiter struct {
 }
 
 // New creates a Limiter with the given cooldown duration.
-// Alerts for the same job will be suppressed until cooldown elapses.
+// A zero or negative cooldown disables suppression (every call is allowed).
 func New(cooldown time.Duration) *Limiter {
 	return &Limiter{
 		cooldown: cooldown,
@@ -24,37 +24,45 @@ func New(cooldown time.Duration) *Limiter {
 	}
 }
 
-// Allow reports whether an alert for jobName should be sent.
-// It returns true the first time a job is seen, and again only after
-// the cooldown window has elapsed since the last allowed alert.
+// Allow returns true if an alert for jobName should be sent.
+// It returns false when a previous alert was sent within the cooldown window.
 func (l *Limiter) Allow(jobName string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	if l.cooldown <= 0 {
+		return true
+	}
 
 	now := time.Now()
 	if t, ok := l.last[jobName]; ok && now.Sub(t) < l.cooldown {
 		return false
 	}
+
 	l.last[jobName] = now
 	return true
 }
 
-// Reset clears the rate-limit state for jobName, allowing the next alert
-// through immediately. Useful when a job recovers successfully.
+// Reset clears the suppression state for jobName, allowing the next
+// alert to pass through immediately regardless of the cooldown.
 func (l *Limiter) Reset(jobName string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.last, jobName)
 }
 
-// Snapshot returns a copy of the current last-alert times keyed by job name.
-// Intended for diagnostics and status endpoints.
-func (l *Limiter) Snapshot() map[string]time.Time {
+// ResetAll clears suppression state for every tracked job.
+func (l *Limiter) ResetAll() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	out := make(map[string]time.Time, len(l.last))
-	for k, v := range l.last {
-		out[k] = v
-	}
-	return out
+	l.last = make(map[string]time.Time)
+}
+
+// LastAlert returns the time of the most recent allowed alert for jobName
+// and whether an entry exists.
+func (l *Limiter) LastAlert(jobName string) (time.Time, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.last[jobName]
+	return t, ok
 }

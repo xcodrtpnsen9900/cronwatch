@@ -4,13 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/cronwatch/internal/ratelimit"
+	"github.com/cronwatch/cronwatch/internal/ratelimit"
 )
 
 func TestAllow_FirstCallPermitted(t *testing.T) {
 	l := ratelimit.New(time.Minute)
 	if !l.Allow("job1") {
-		t.Fatal("expected first alert to be allowed")
+		t.Fatal("first call should be allowed")
 	}
 }
 
@@ -18,7 +18,7 @@ func TestAllow_SecondCallSuppressed(t *testing.T) {
 	l := ratelimit.New(time.Minute)
 	l.Allow("job1")
 	if l.Allow("job1") {
-		t.Fatal("expected second alert within cooldown to be suppressed")
+		t.Fatal("second call within cooldown should be suppressed")
 	}
 }
 
@@ -27,7 +27,7 @@ func TestAllow_AfterCooldownPermitted(t *testing.T) {
 	l.Allow("job1")
 	time.Sleep(20 * time.Millisecond)
 	if !l.Allow("job1") {
-		t.Fatal("expected alert to be allowed after cooldown elapsed")
+		t.Fatal("call after cooldown should be allowed")
 	}
 }
 
@@ -35,7 +35,7 @@ func TestAllow_IndependentJobs(t *testing.T) {
 	l := ratelimit.New(time.Minute)
 	l.Allow("job1")
 	if !l.Allow("job2") {
-		t.Fatal("expected different job to be allowed independently")
+		t.Fatal("different job should be independent")
 	}
 }
 
@@ -44,41 +44,48 @@ func TestReset_AllowsImmediateAlert(t *testing.T) {
 	l.Allow("job1")
 	l.Reset("job1")
 	if !l.Allow("job1") {
-		t.Fatal("expected alert after reset to be allowed")
+		t.Fatal("after Reset, next call should be allowed")
 	}
 }
 
-func TestReset_UnknownJobNoOp(t *testing.T) {
+func TestResetAll_ClearsAllJobs(t *testing.T) {
 	l := ratelimit.New(time.Minute)
-	// should not panic
-	l.Reset("nonexistent")
+	l.Allow("job1")
+	l.Allow("job2")
+	l.ResetAll()
+	if !l.Allow("job1") || !l.Allow("job2") {
+		t.Fatal("after ResetAll, all jobs should be allowed")
+	}
 }
 
-func TestSnapshot_ReflectsState(t *testing.T) {
-	l := ratelimit.New(time.Minute)
-	before := time.Now()
-	l.Allow("jobA")
-	l.Allow("jobB")
-
-	snap := l.Snapshot()
-	if len(snap) != 2 {
-		t.Fatalf("expected 2 entries in snapshot, got %d", len(snap))
-	}
-	for _, name := range []string{"jobA", "jobB"} {
-		if ts, ok := snap[name]; !ok || ts.Before(before) {
-			t.Errorf("snapshot entry for %q missing or has wrong timestamp", name)
+func TestAllow_ZeroCooldownAlwaysPermits(t *testing.T) {
+	l := ratelimit.New(0)
+	for i := 0; i < 5; i++ {
+		if !l.Allow("job1") {
+			t.Fatalf("zero cooldown: call %d should be allowed", i)
 		}
 	}
 }
 
-func TestSnapshot_IsCopy(t *testing.T) {
+func TestLastAlert_RecordsTime(t *testing.T) {
 	l := ratelimit.New(time.Minute)
+	before := time.Now()
 	l.Allow("job1")
-	snap := l.Snapshot()
-	delete(snap, "job1")
+	after := time.Now()
 
-	snap2 := l.Snapshot()
-	if _, ok := snap2["job1"]; !ok {
-		t.Fatal("modifying snapshot should not affect limiter state")
+	t2, ok := l.LastAlert("job1")
+	if !ok {
+		t.Fatal("expected last alert entry")
+	}
+	if t2.Before(before) || t2.After(after) {
+		t.Errorf("last alert time %v not in expected range [%v, %v]", t2, before, after)
+	}
+}
+
+func TestLastAlert_MissingJob(t *testing.T) {
+	l := ratelimit.New(time.Minute)
+	_, ok := l.LastAlert("missing")
+	if ok {
+		t.Fatal("expected no entry for unseen job")
 	}
 }
