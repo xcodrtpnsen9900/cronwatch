@@ -11,6 +11,10 @@
 //		// send alert
 //	}
 //
-// Calling Reset or ResetAll clears the suppression state, which is useful
-// when a job recovers and the next failure should always produce a fresh alert.
+// Calling Reset clears the suppression state for a single job, while
+// ResetAll clears all tracked jobs. Both are useful when a job recovers
+// and the next failure should always produce a fresh alert regardless of
+// how recently the previous alert was sent.
+//
+// The limiter is safe for concurrent use by multiple goroutines.
 package ratelimit
