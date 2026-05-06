@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -34,7 +35,8 @@ func New(url string) *Client {
 
 // Send marshals the payload and posts it to the webhook URL.
 // It returns an error if the request fails or the server responds with a
-// non-2xx status code.
+// non-2xx status code. The response body is included in the error message
+// when a non-2xx status is received to aid debugging.
 func (c *Client) Send(p Payload) error {
 	if p.Timestamp.IsZero() {
 		p.Timestamp = time.Now().UTC()
@@ -58,6 +60,10 @@ func (c *Client) Send(p Payload) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		if len(respBody) > 0 {
+			return fmt.Errorf("webhook: unexpected status %d from %s: %s", resp.StatusCode, c.URL, respBody)
+		}
 		return fmt.Errorf("webhook: unexpected status %d from %s", resp.StatusCode, c.URL)
 	}
 
