@@ -50,6 +50,17 @@ func (r *Registry) Job(name string) *Counters {
 	return c
 }
 
+// JobNames returns a sorted-order snapshot of all registered job names.
+func (r *Registry) JobNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.jobs))
+	for name := range r.jobs {
+		names = append(names, name)
+	}
+	return names
+}
+
 // Snapshot returns a point-in-time copy of all counters keyed by job name.
 // The special key "__global__" holds the global counters.
 func (r *Registry) Snapshot() map[string]map[string]int64 {
