@@ -12,12 +12,12 @@ import (
 type EventKind string
 
 const (
-	EventAlertSent      EventKind = "alert_sent"
-	EventCircuitOpen    EventKind = "circuit_open"
-	EventCircuitClose   EventKind = "circuit_close"
-	EventJobRecovered   EventKind = "job_recovered"
-	EventJobFailed      EventKind = "job_failed"
-	EventJobMissed      EventKind = "job_missed"
+	EventAlertSent    EventKind = "alert_sent"
+	EventCircuitOpen  EventKind = "circuit_open"
+	EventCircuitClose EventKind = "circuit_close"
+	EventJobRecovered EventKind = "job_recovered"
+	EventJobFailed    EventKind = "job_failed"
+	EventJobMissed    EventKind = "job_missed"
 )
 
 // Entry is a single audit log record.
@@ -79,6 +79,20 @@ func (l *Log) ForJob(job string) []Entry {
 	var out []Entry
 	for _, e := range l.entries {
 		if e.Job == job {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Since returns all entries recorded at or after the given time, oldest first.
+func (l *Log) Since(t time.Time) []Entry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var out []Entry
+	for _, e := range l.entries {
+		if !e.Time.Before(t) {
 			out = append(out, e)
 		}
 	}
