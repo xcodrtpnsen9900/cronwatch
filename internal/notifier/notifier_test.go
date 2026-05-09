@@ -47,6 +47,14 @@ func (sn *senderNotifier) Notify(p alert.Payload) error {
 	return sn.sender.Send(p)
 }
 
+// newSenderNotifier is a helper that constructs a senderNotifier with a fresh
+// stubSender and a throttle configured with the given burst limit.
+func newSenderNotifier(burst int) (*senderNotifier, *stubSender) {
+	stub := &stubSender{}
+	th := throttle.New(time.Minute, burst)
+	return &senderNotifier{sender: stub, throttle: th}, stub
+}
+
 func TestNew_EmptyURL(t *testing.T) {
 	_, err := notifier.New("")
 	if err == nil {
@@ -65,9 +73,7 @@ func TestNew_ValidURL(t *testing.T) {
 }
 
 func TestThrottled_AfterBurst(t *testing.T) {
-	stub := &stubSender{}
-	th := throttle.New(time.Minute, 2)
-	sn := &senderNotifier{sender: stub, throttle: th}
+	sn, stub := newSenderNotifier(2)
 	p := alert.Payload{Job: "myjob", Type: alert.TypeMissed}
 
 	if err := sn.Notify(p); err != nil {
@@ -86,9 +92,8 @@ func TestThrottled_AfterBurst(t *testing.T) {
 
 func TestSenderError_Propagated(t *testing.T) {
 	sentinel := errors.New("send failed")
-	stub := &stubSender{err: sentinel}
-	th := throttle.New(time.Minute, 5)
-	sn := &senderNotifier{sender: stub, throttle: th}
+	sn, _ := newSenderNotifier(5)
+	sn.sender.err = sentinel
 	p := alert.Payload{Job: "myjob", Type: alert.TypeFailed}
 
 	if err := sn.Notify(p); !errors.Is(err, sentinel) {
