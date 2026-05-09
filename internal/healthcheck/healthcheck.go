@@ -45,6 +45,13 @@ func (c *Checker) Register(name string, fn func() error) {
 	c.checks[name] = fn
 }
 
+// Unregister removes a named check function. It is safe to call concurrently.
+func (c *Checker) Unregister(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.checks, name)
+}
+
 // Handler returns an http.HandlerFunc that runs all checks and responds
 // with 200 OK when healthy or 503 Service Unavailable when degraded.
 func (c *Checker) Handler() http.HandlerFunc {
