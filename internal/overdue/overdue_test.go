@@ -63,6 +63,20 @@ func TestAll_ReturnsSnapshot(t *testing.T) {
 	}
 }
 
+func TestAll_ReturnsSnapshot_Isolation(t *testing.T) {
+	// Mutating the returned slice must not affect the tracker's internal state.
+	tr := newTracker()
+	tr.Mark("jobA", time.Now().Add(-time.Minute))
+
+	snap := tr.All()
+	snap[0].Job = "tampered"
+
+	all := tr.All()
+	if all[0].Job != "jobA" {
+		t.Error("All() should return an independent snapshot, not a reference to internal state")
+	}
+}
+
 func TestIsOverdue_False_ForUnknown(t *testing.T) {
 	tr := newTracker()
 	if tr.IsOverdue("ghost") {
