@@ -96,3 +96,18 @@ func TestAll_ReturnsCopy(t *testing.T) {
 		t.Error("store was mutated through returned map")
 	}
 }
+
+func TestDelete_LastKeyRemovesJob(t *testing.T) {
+	s := newStore()
+	s.Put("job1", "env", "prod")
+	if err := s.Delete("job1", "env"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// After deleting the only label, the job should no longer appear in Jobs().
+	jobs := s.Jobs()
+	for _, j := range jobs {
+		if j == "job1" {
+			t.Error("expected job1 to be removed from Jobs() after last label deleted")
+		}
+	}
+}
