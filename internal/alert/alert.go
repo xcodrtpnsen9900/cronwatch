@@ -9,8 +9,8 @@ import (
 type Type string
 
 const (
-	TypeMissed Type = "missed"
-	TypeFailed Type = "failed"
+	TypeMissed    Type = "missed"
+	TypeFailed    Type = "failed"
 	TypeRecovered Type = "recovered"
 )
 
@@ -62,5 +62,19 @@ func (b *Builder) Recovered(jobName string) Payload {
 		AlertType: TypeRecovered,
 		Message:   fmt.Sprintf("Job %q has recovered", jobName),
 		Timestamp: b.now(),
+	}
+}
+
+// MissedWithDuration returns a Payload for a missed job that includes how long
+// ago the job was expected to run, providing more context in the alert details.
+func (b *Builder) MissedWithDuration(jobName string, expectedAt time.Time) Payload {
+	now := b.now()
+	overdue := now.Sub(expectedAt).Truncate(time.Second)
+	return Payload{
+		JobName:   jobName,
+		AlertType: TypeMissed,
+		Message:   fmt.Sprintf("Job %q missed its scheduled run", jobName),
+		Timestamp: now,
+		Details:   fmt.Sprintf("expected at %s (overdue by %s)", expectedAt.Format(time.RFC3339), overdue),
 	}
 }
