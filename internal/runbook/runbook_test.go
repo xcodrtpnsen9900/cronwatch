@@ -79,3 +79,23 @@ func TestAll_ReturnsCopy(t *testing.T) {
 		t.Fatalf("expected 2 entries, got %d", len(all))
 	}
 }
+
+func TestAll_Empty(t *testing.T) {
+	s := newStore()
+	all := s.All()
+	if len(all) != 0 {
+		t.Fatalf("expected 0 entries, got %d", len(all))
+	}
+}
+
+func TestAll_IsolatedFromStore(t *testing.T) {
+	s := newStore()
+	_ = s.Set("job", "https://example.com", "desc")
+	all := s.All()
+	// Mutating the returned map must not affect the store.
+	delete(all, "job")
+	_, ok := s.Get("job")
+	if !ok {
+		t.Fatal("store was mutated via All() return value")
+	}
+}
