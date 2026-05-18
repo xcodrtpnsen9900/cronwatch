@@ -1,5 +1,3 @@
-// Package ratelimit provides per-job alert suppression to prevent
-// notification floods when a job repeatedly fails within a cooldown window.
 package ratelimit
 
 import (
@@ -7,62 +5,74 @@ import (
 	"time"
 )
 
-// Limiter tracks the last alert time per job and suppresses duplicate
-// alerts that arrive within the configured cooldown period.
-type Limiter struct {
-	mu       sync.Mutex
-	cooldown time.Duration
-	last     map[string]time.Time
+type entry struct {
+	lastAlert time.Time
 }
 
-// New creates a Limiter with the given cooldown duration.
-// A zero or negative cooldown disables suppression (every call is allowed).
-func New(cooldown time.Duration) *Limiter {
-	return &Limiter{
+// RateLimit enforces a per-job cooldown between successive alerts.
+type RateLimit struct {
+	mu       sync.Mutex
+	entries  map[string]*entry
+	cooldown time.Duration
+	now      func() time.Time
+}
+
+// New creates a RateLimit with the given cooldown duration.
+func New(cooldown time.Duration) *RateLimit {
+	return &RateLimit{
+		entries:  make(map[string]*entry),
 		cooldown: cooldown,
-		last:     make(map[string]time.Time),
+		now:      time.Now,
 	}
 }
 
-// Allow returns true if an alert for jobName should be sent.
-// It returns false when a previous alert was sent within the cooldown window.
-func (l *Limiter) Allow(jobName string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+// Allow returns true if an alert for the given job is permitted under the
+// current cooldown policy, and records the attempt time. Subsequent calls
+// within the cooldown window return false.
+func (rl *RateLimit) Allow(job string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
 
-	if l.cooldown <= 0 {
+	now := rl.now()
+	e, ok := rl.entries[job]
+	if !ok {
+		rl.entries[job] = &entry{lastAlert: now}
 		return true
 	}
-
-	now := time.Now()
-	if t, ok := l.last[jobName]; ok && now.Sub(t) < l.cooldown {
-		return false
+	if now.Sub(e.lastAlert) >= rl.cooldown {
+		e.lastAlert = now
+		return true
 	}
-
-	l.last[jobName] = now
-	return true
+	return false
 }
 
-// Reset clears the suppression state for jobName, allowing the next
-// alert to pass through immediately regardless of the cooldown.
-func (l *Limiter) Reset(jobName string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.last, jobName)
+// Reset clears the cooldown state for the given job, allowing the next call
+// to Allow to succeed immediately.
+func (rl *RateLimit) Reset(job string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	delete(rl.entries, job)
 }
 
-// ResetAll clears suppression state for every tracked job.
-func (l *Limiter) ResetAll() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.last = make(map[string]time.Time)
+// ResetAll clears cooldown state for every tracked job.
+func (rl *RateLimit) ResetAll() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.entries = make(map[string]*entry)
 }
 
-// LastAlert returns the time of the most recent allowed alert for jobName
-// and whether an entry exists.
-func (l *Limiter) LastAlert(jobName string) (time.Time, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	t, ok := l.last[jobName]
-	return t, ok
+// Remaining returns the duration until the next alert is permitted for job.
+// Returns zero if the job is not throttled or the cooldown has elapsed.
+func (rl *RateLimit) Remaining(job string) time.Duration {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	e, ok := rl.entries[job]
+	if !ok {
+		return 0
+	}
+	remaining := rl.cooldown - rl.now().Sub(e.lastAlert)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }
